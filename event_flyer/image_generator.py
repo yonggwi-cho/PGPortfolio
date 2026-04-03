@@ -1,6 +1,10 @@
 """
-Step 3: Generate background image using DALL-E 3.
-Falls back to a gradient background using PIL if OpenAI is not available.
+Step 3: Generate background image using an AI image model.
+
+Priority order:
+  1. Google Imagen 3  (GOOGLE_API_KEY が設定されている場合)
+  2. DALL-E 3         (OPENAI_API_KEY が設定されている場合)
+  3. PIL gradient     (フォールバック)
 """
 import io
 import os
@@ -10,6 +14,13 @@ from .models import FlyerLayout
 
 FLYER_WIDTH = 800
 FLYER_HEIGHT = 1200
+
+# No-text instruction appended to every background prompt
+_NO_TEXT_SUFFIX = (
+    "No text, no letters, no words, no numbers, no typography, no signs. "
+    "Clean background suitable for event flyer overlay. "
+    "High quality, professional style."
+)
 
 
 def _hex_to_rgb(hex_color: str) -> tuple:
@@ -67,33 +78,68 @@ def _generate_gradient_background(layout: FlyerLayout) -> Image.Image:
 def generate_background(layout: FlyerLayout) -> Image.Image:
     """
     Generate background image.
-    Uses DALL-E 3 if OPENAI_API_KEY is available, otherwise uses PIL gradient.
+
+    Tries image generation models in priority order:
+      1. Google Imagen 3  (requires GOOGLE_API_KEY)
+      2. DALL-E 3         (requires OPENAI_API_KEY)
+      3. PIL gradient     (always available as fallback)
     """
+    google_api_key = os.environ.get("GOOGLE_API_KEY")
     openai_api_key = os.environ.get("OPENAI_API_KEY")
+
+    if google_api_key:
+        try:
+            return _generate_imagen_background(layout, google_api_key)
+        except Exception as e:
+            print(f"   ⚠️  Google Imagen 3 生成失敗 ({e})")
 
     if openai_api_key:
         try:
             return _generate_dalle_background(layout, openai_api_key)
         except Exception as e:
-            print(f"   ⚠️  DALL-E 3生成失敗 ({e})、グラデーション背景を使用します")
+            print(f"   ⚠️  DALL-E 3 生成失敗 ({e})")
 
-    print("   📐 グラデーション背景を生成中 (DALL-E 3を使用するにはOPENAI_API_KEYを設定してください)")
+    print("   📐 グラデーション背景を生成中")
+    print("      (AI背景: GOOGLE_API_KEY または OPENAI_API_KEY を設定してください)")
     return _generate_gradient_background(layout)
+
+
+def _generate_imagen_background(layout: FlyerLayout, api_key: str) -> Image.Image:
+    """Generate background image using Google Imagen 3."""
+    from google import genai
+    from google.genai import types
+
+    print("   🖼️  Google Imagen 3 で背景画像を生成中...")
+
+    prompt = f"{layout.background_prompt}. {_NO_TEXT_SUFFIX}"
+
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_images(
+        model="imagen-3.0-generate-002",
+        prompt=prompt,
+        config=types.GenerateImagesConfig(
+            number_of_images=1,
+            aspect_ratio="3:4",          # portrait orientation for flyer
+            safety_filter_level="BLOCK_SOME",
+            person_generation="DONT_ALLOW",
+        ),
+    )
+
+    image_bytes = response.generated_images[0].image.image_bytes
+    img = Image.open(io.BytesIO(image_bytes))
+    img = img.resize((FLYER_WIDTH, FLYER_HEIGHT), Image.LANCZOS)
+
+    print("   ✅ Google Imagen 3 背景画像生成完了")
+    return img
 
 
 def _generate_dalle_background(layout: FlyerLayout, api_key: str) -> Image.Image:
     """Generate background image using DALL-E 3."""
     import openai
 
-    print("   🖼️  DALL-E 3で背景画像を生成中...")
+    print("   🖼️  DALL-E 3 で背景画像を生成中...")
 
-    # Ensure prompt emphasizes no text
-    prompt = (
-        f"{layout.background_prompt}. "
-        "No text, no letters, no words, no typography. "
-        "Clean background suitable for event flyer. "
-        "High quality, professional photography or illustration style."
-    )
+    prompt = f"{layout.background_prompt}. {_NO_TEXT_SUFFIX}"
 
     client = openai.OpenAI(api_key=api_key)
     response = client.images.generate(
@@ -111,5 +157,5 @@ def _generate_dalle_background(layout: FlyerLayout, api_key: str) -> Image.Image
     img = Image.open(io.BytesIO(img_response.content))
     img = img.resize((FLYER_WIDTH, FLYER_HEIGHT), Image.LANCZOS)
 
-    print("   ✅ DALL-E 3背景画像生成完了")
+    print("   ✅ DALL-E 3 背景画像生成完了")
     return img

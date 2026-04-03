@@ -4,5 +4,9 @@ pillow>=10.0.0
 pydantic>=2.0.0
 requests>=2.31.0
 
-# Optional: for DALL-E 3 background generation
+# Optional: image generation backends (at least one recommended)
+# Google Imagen 3 (GOOGLE_API_KEY が必要)
+# google-genai>=1.0.0
+
+# DALL-E 3 (OPENAI_API_KEY が必要)
 # openai>=1.0.0
