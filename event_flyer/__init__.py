@@ -6,6 +6,7 @@ event flyers from natural language descriptions with accurate text rendering.
 """
 from .models import EventInfo, FlyerLayout, ColorScheme, LayoutSection
 from .pipeline import generate_flyer, generate_flyer_from_dict
+from .platforms import PLATFORMS, get_platform
 
 __all__ = [
     "EventInfo",
@@ -14,4 +15,6 @@ __all__ = [
     "LayoutSection",
     "generate_flyer",
     "generate_flyer_from_dict",
+    "PLATFORMS",
+    "get_platform",
 ]

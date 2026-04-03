@@ -1,25 +1,25 @@
 """
 Step 4: Accurately render event text onto the background image using PIL.
-This ensures all text information is rendered correctly,
-solving the accuracy problem of AI image generation models.
+All text information is rendered by PIL (not by AI), ensuring perfect accuracy
+for dates, venues, prices, and other critical event details.
 """
 import os
 from PIL import Image, ImageDraw, ImageFont
 from .models import EventInfo, FlyerLayout, LayoutSection
+from .platforms import PlatformConfig
 
-FLYER_WIDTH = 800
-FLYER_HEIGHT = 1200
-
-FONT_SIZES = {
-    "title": 72,
-    "heading": 48,
-    "body": 32,
-    "caption": 24,
+# Base font sizes designed for 1080px width
+_BASE_WIDTH = 1080
+_BASE_FONT_SIZES = {
+    "title":   96,
+    "heading": 60,
+    "body":    40,
+    "caption": 30,
 }
 
 # Font search paths for Japanese support
-JAPANESE_FONT_PATHS = [
-    # Linux system fonts
+_JAPANESE_FONT_PATHS = [
+    # Linux
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansJP-Regular.otf",
@@ -31,26 +31,26 @@ JAPANESE_FONT_PATHS = [
     "C:/Windows/Fonts/msgothic.ttc",
     "C:/Windows/Fonts/YuGothM.ttc",
 ]
-
-JAPANESE_FONT_BOLD_PATHS = [
+_JAPANESE_FONT_BOLD_PATHS = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansJP-Bold.otf",
 ]
 
 
-def _find_font(bold: bool = False, size: int = 32) -> ImageFont.FreeTypeFont:
-    """Find the best available font that supports Japanese characters."""
-    paths = JAPANESE_FONT_BOLD_PATHS + JAPANESE_FONT_PATHS if bold else JAPANESE_FONT_PATHS
+def _scale(base_size: int, platform_width: int) -> int:
+    """Scale a size proportionally to the platform width."""
+    return max(1, int(base_size * platform_width / _BASE_WIDTH))
 
+
+def _find_font(bold: bool, size: int) -> ImageFont.FreeTypeFont:
+    paths = (_JAPANESE_FONT_BOLD_PATHS + _JAPANESE_FONT_PATHS) if bold else _JAPANESE_FONT_PATHS
     for path in paths:
         if os.path.exists(path):
             try:
                 return ImageFont.truetype(path, size)
             except Exception:
                 continue
-
-    # Final fallback: default font (may not support Japanese)
     try:
         return ImageFont.load_default(size=size)
     except TypeError:
@@ -58,29 +58,21 @@ def _find_font(bold: bool = False, size: int = 32) -> ImageFont.FreeTypeFont:
 
 
 def _hex_to_rgb(hex_color: str) -> tuple:
-    """Convert hex color string to RGB tuple."""
     hex_color = hex_color.lstrip("#")
     return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
 
 
 def _apply_overlay(img: Image.Image, layout: FlyerLayout) -> Image.Image:
-    """Apply semi-transparent overlay for better text readability."""
     overlay_rgb = _hex_to_rgb(layout.color_scheme.overlay_color)
     opacity = int(layout.color_scheme.overlay_opacity * 255)
     overlay = Image.new("RGBA", img.size, (*overlay_rgb, opacity))
-    img_rgba = img.convert("RGBA")
-    img_rgba = Image.alpha_composite(img_rgba, overlay)
-    return img_rgba.convert("RGB")
+    return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
 
 def _get_section_content(section: LayoutSection, event_info: EventInfo) -> str:
-    """Get the text content for a section."""
     if section.custom_content:
         return section.custom_content
-
     key = section.content_key
-
-    # Special combined fields
     if key == "datetime_combined":
         return f"{event_info.date}  {event_info.time}"
     if key == "venue_address_combined":
@@ -88,16 +80,11 @@ def _get_section_content(section: LayoutSection, event_info: EventInfo) -> str:
         if event_info.address:
             parts.append(event_info.address)
         return "\n".join(parts)
-
-    # Direct field access
     value = getattr(event_info, key, None)
     if value is None:
         return ""
-
-    # Handle list fields (highlights)
     if isinstance(value, list):
         return "\n".join(f"◆ {item}" for item in value)
-
     return str(value)
 
 
@@ -108,39 +95,32 @@ def _draw_text_with_shadow(
     font: ImageFont.FreeTypeFont,
     fill_color: tuple,
     anchor: str = "mm",
-    shadow_offset: int = 2,
-    shadow_opacity: int = 128,
+    shadow_offset: int = 3,
 ) -> None:
-    """Draw text with a subtle drop shadow for readability."""
-    # Shadow
-    shadow_color = (0, 0, 0, shadow_opacity)
     sx, sy = xy[0] + shadow_offset, xy[1] + shadow_offset
-    draw.text((sx, sy), text, font=font, fill=shadow_color, anchor=anchor)
-    # Main text
+    draw.text((sx, sy), text, font=font, fill=(0, 0, 0, 140), anchor=anchor)
     draw.text(xy, text, font=font, fill=fill_color, anchor=anchor)
 
 
-def _draw_decorative_line(draw: ImageDraw.ImageDraw, y: int, color: tuple, width: int = 2) -> None:
-    """Draw a decorative horizontal line."""
-    margin = 60
-    draw.line([(margin, y), (FLYER_WIDTH - margin, y)], fill=color, width=width)
+def _draw_decorative_line(
+    draw: ImageDraw.ImageDraw, y: int, color: tuple, img_width: int, line_width: int = 2
+) -> None:
+    margin = _scale(60, img_width)
+    draw.line([(margin, y), (img_width - margin, y)], fill=color, width=line_width)
 
 
 def _wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
-    """Wrap text to fit within max_width."""
     lines = []
     for paragraph in text.split("\n"):
         if not paragraph:
             lines.append("")
             continue
-
-        words = paragraph
         current_line = ""
-        for char in words:
-            test_line = current_line + char
-            bbox = font.getbbox(test_line)
+        for char in paragraph:
+            test = current_line + char
+            bbox = font.getbbox(test)
             if bbox[2] - bbox[0] <= max_width:
-                current_line = test_line
+                current_line = test
             else:
                 if current_line:
                     lines.append(current_line)
@@ -154,41 +134,42 @@ def render_flyer(
     background: Image.Image,
     event_info: EventInfo,
     layout: FlyerLayout,
+    platform: PlatformConfig,
 ) -> Image.Image:
     """
     Render the complete flyer by compositing event text onto the background.
 
-    This is the key step that ensures text accuracy:
-    - All text is rendered by PIL, not by AI
-    - Every character is precisely positioned
+    All text is drawn by PIL — never by an AI model — guaranteeing
+    perfect accuracy for dates, venues, prices, and contact information.
     """
-    print("✏️  テキストを正確にレンダリング中...")
+    print(f"✏️  テキストをレンダリング中 ({platform.width}×{platform.height})...")
 
-    # Apply overlay for readability
-    img = _apply_overlay(background, layout)
-    draw = ImageDraw.Draw(img.convert("RGBA"))
-    img = img.convert("RGBA")
+    w, h = platform.width, platform.height
+    padding = _scale(70, w)
+    bar_h = _scale(8, w)
+
+    img = _apply_overlay(background, layout).convert("RGBA")
     draw = ImageDraw.Draw(img)
 
     accent_rgb = _hex_to_rgb(layout.color_scheme.accent)
     primary_rgb = _hex_to_rgb(layout.color_scheme.primary)
 
-    # Add top decorative bar
-    top_bar = Image.new("RGBA", (FLYER_WIDTH, 6), (*accent_rgb, 230))
+    # Top decorative bar
+    top_bar = Image.new("RGBA", (w, bar_h), (*accent_rgb, 230))
     img.paste(top_bar, (0, 0), top_bar)
 
-    # Render each section
-    current_y = 0
+    current_y = bar_h
 
     for section in layout.sections:
         content = _get_section_content(section, event_info)
         if not content:
             continue
 
-        font_size = FONT_SIZES.get(section.font_size_category, 32)
+        base_size = _BASE_FONT_SIZES.get(section.font_size_category, 40)
+        font_size = _scale(base_size, w)
         font = _find_font(bold=section.bold, size=font_size)
 
-        # Get color
+        # Resolve text color
         color_role = section.color_role
         if color_role == "accent":
             text_color = (*accent_rgb, 255)
@@ -199,51 +180,35 @@ def render_flyer(
         else:
             text_color = (*_hex_to_rgb(layout.color_scheme.text_on_dark), 255)
 
-        # Apply top margin
-        current_y += int(section.margin_top_ratio * FLYER_HEIGHT)
-
-        # Handle text alignment and positioning
-        padding = 60
-        max_text_width = FLYER_WIDTH - padding * 2
-
+        current_y += int(section.margin_top_ratio * h)
+        max_text_width = w - padding * 2
         lines = _wrap_text(content, font, max_text_width)
+        line_height = int(font_size * 1.4)
 
-        for line in lines:
+        for i, line in enumerate(lines):
             if not line:
                 current_y += font_size // 2
                 continue
 
             if section.alignment == "center":
-                x = FLYER_WIDTH // 2
-                anchor = "mm"
+                x, anchor = w // 2, "mm"
             elif section.alignment == "right":
-                x = FLYER_WIDTH - padding
-                anchor = "rm"
+                x, anchor = w - padding, "rm"
             else:
-                x = padding
-                anchor = "lm"
+                x, anchor = padding, "lm"
 
-            # Add decorative line before headings (not the main title)
-            if section.font_size_category == "heading" and line == lines[0]:
-                _draw_decorative_line(draw, current_y - font_size // 2 - 5, (*accent_rgb, 180), 1)
+            if section.font_size_category == "heading" and i == 0:
+                _draw_decorative_line(draw, current_y - font_size // 2 - _scale(6, w), (*accent_rgb, 180), w, 1)
 
-            _draw_text_with_shadow(
-                draw,
-                (x, current_y),
-                line,
-                font,
-                text_color,
-                anchor=anchor,
-            )
-            current_y += int(font_size * 1.4)
+            _draw_text_with_shadow(draw, (x, current_y), line, font, text_color, anchor=anchor)
+            current_y += line_height
 
-        # Add line after heading
         if section.font_size_category == "heading":
-            _draw_decorative_line(draw, current_y + 5, (*accent_rgb, 180), 1)
+            _draw_decorative_line(draw, current_y + _scale(6, w), (*accent_rgb, 180), w, 1)
 
     # Bottom decorative bar
-    bottom_bar = Image.new("RGBA", (FLYER_WIDTH, 6), (*accent_rgb, 230))
-    img.paste(bottom_bar, (0, FLYER_HEIGHT - 6), bottom_bar)
+    bottom_bar = Image.new("RGBA", (w, bar_h), (*accent_rgb, 230))
+    img.paste(bottom_bar, (0, h - bar_h), bottom_bar)
 
-    print(f"✅ テキストレンダリング完了")
+    print("✅ テキストレンダリング完了")
     return img.convert("RGB")

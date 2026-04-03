@@ -9,11 +9,17 @@ Usage:
     # With input text:
     python generate_flyer.py "来月15日に渋谷でジャズコンサート開催..."
 
-    # With output path:
-    python generate_flyer.py "..." --output my_event.png
+    # Specify platform:
+    python generate_flyer.py "..." --platform instagram   # 1080×1350 (default)
+    python generate_flyer.py "..." --platform story       # 1080×1920
+    python generate_flyer.py "..." --platform square      # 1080×1080
 
-    # Demo mode (runs with sample event):
+    # With output path:
+    python generate_flyer.py "..." --output my_event.jpg
+
+    # Demo mode:
     python generate_flyer.py --demo
+    python generate_flyer.py --demo --platform story
 """
 import sys
 import argparse
@@ -45,35 +51,56 @@ DEMO_EVENT = """
 
 def main():
     parser = argparse.ArgumentParser(
-        description="イベントチラシ生成システム (Multi-Model: Claude + DALL-E 3 + PIL)"
+        description="イベントチラシ生成システム (Multi-Model: Claude + Google Imagen 3 + PIL)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+プラットフォーム一覧:
+  instagram  Instagram フィード 4:5 (1080×1350)  ← デフォルト
+  story      Instagram Stories / LINE VOOM 9:16 (1080×1920)
+  square     正方形 1:1 (1080×1080) — LINE / Instagram
+
+出力フォーマット: JPEG (SNSシェア向け最適化済み)
+
+環境変数:
+  ANTHROPIC_API_KEY  (必須)
+  GOOGLE_API_KEY     (推奨: Google Imagen 3 背景生成)
+  OPENAI_API_KEY     (代替: DALL-E 3 背景生成)
+""",
     )
     parser.add_argument(
         "event_description",
         nargs="?",
-        help="イベントの説明（自然言語）"
+        help="イベントの説明（自然言語）",
+    )
+    parser.add_argument(
+        "--platform", "-p",
+        default="instagram",
+        choices=["instagram", "story", "square"],
+        help="出力プラットフォーム (デフォルト: instagram)",
     )
     parser.add_argument(
         "--output", "-o",
-        default="flyer.png",
-        help="出力ファイルパス (デフォルト: flyer.png)"
+        default=None,
+        help="出力ファイルパス (デフォルト: flyer_<platform>.jpg)",
     )
     parser.add_argument(
         "--demo",
         action="store_true",
-        help="デモモード: サンプルイベントでチラシを生成"
+        help="デモモード: サンプルイベントでチラシを生成",
     )
     args = parser.parse_args()
 
-    # Check API key
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("エラー: ANTHROPIC_API_KEY 環境変数を設定してください")
         print("  export ANTHROPIC_API_KEY='your-api-key'")
         sys.exit(1)
 
-    # Get event description
+    # Default output filename includes platform name
+    output_path = args.output or f"flyer_{args.platform}.jpg"
+
     if args.demo:
         event_description = DEMO_EVENT
-        print("📌 デモモードで実行します")
+        print(f"📌 デモモード: {args.platform} 向けチラシを生成します")
         print()
     elif args.event_description:
         event_description = args.event_description
@@ -83,8 +110,7 @@ def main():
         lines = []
         try:
             while True:
-                line = input()
-                lines.append(line)
+                lines.append(input())
         except EOFError:
             pass
         event_description = "\n".join(lines)
@@ -94,23 +120,20 @@ def main():
         print("エラー: イベントの説明が空です")
         sys.exit(1)
 
-    # Run the pipeline
     from event_flyer import generate_flyer
 
     output_path, event_info, layout = generate_flyer(
         user_input=event_description,
-        output_path=args.output,
+        output_path=output_path,
+        platform_name=args.platform,
     )
 
+    file_size_kb = os.path.getsize(output_path) // 1024
     print()
-    print("📊 生成されたチラシの情報:")
-    print(f"   タイトル: {event_info.title}")
-    print(f"   日時: {event_info.date} {event_info.time}")
-    print(f"   会場: {event_info.venue}")
-    if event_info.ticket_price:
-        print(f"   料金: {event_info.ticket_price}")
-    print(f"   スタイル: {layout.style}")
-    print(f"   ファイル: {output_path}")
+    print("📲 SNSシェア情報:")
+    print(f"   ファイル  : {output_path}")
+    print(f"   サイズ    : {file_size_kb} KB")
+    print(f"   フォーマット: JPEG (Instagram・LINE 対応)")
 
 
 if __name__ == "__main__":
