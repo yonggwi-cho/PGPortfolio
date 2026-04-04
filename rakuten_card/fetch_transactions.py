@@ -1,23 +1,25 @@
 """
 楽天カード利用明細取得スクリプト
 
-環境変数:
-  RAKUTEN_USER_ID  : 楽天会員ID（メールアドレスまたはユーザーID）
-  RAKUTEN_PASSWORD : 楽天会員パスワード
-
 使い方:
+  # 引数で直接渡す
+  python fetch_transactions.py --user-id your_id --password your_pass
+
+  # 環境変数で渡す
   export RAKUTEN_USER_ID="your_id"
   export RAKUTEN_PASSWORD="your_password"
-  python fetch_transactions.py [--months 3] [--output transactions.csv]
+  python fetch_transactions.py
+
+  # 対話入力（引数も環境変数もない場合は自動で聞かれる）
+  python fetch_transactions.py
 """
 
 import os
 import sys
-import time
+import getpass
 import argparse
 import csv
 from pathlib import Path
-from datetime import datetime
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -28,9 +30,10 @@ ENAVI_BASE = "https://www.rakuten-card.co.jp/e-navi"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="楽天カード利用明細を取得する")
+    parser.add_argument("--user-id", dest="user_id", default="", help="楽天会員ID（省略時は環境変数 or 対話入力）")
+    parser.add_argument("--password", default="", help="パスワード（省略時は環境変数 or 対話入力）")
     parser.add_argument("--months", type=int, default=3, help="取得する月数 (デフォルト: 3)")
     parser.add_argument("--output", default="transactions.csv", help="出力CSVファイル名")
-    parser.add_argument("--headless", action="store_true", default=True, help="ヘッドレスモード (デフォルト: True)")
     parser.add_argument("--show-browser", action="store_true", help="ブラウザを表示する")
     return parser.parse_args()
 
@@ -260,17 +263,20 @@ def save_to_csv(transactions: list[dict], filepath: str):
 def main():
     args = parse_args()
 
-    user_id = os.environ.get("RAKUTEN_USER_ID", "")
-    password = os.environ.get("RAKUTEN_PASSWORD", "")
+    # 優先順位: コマンド引数 > 環境変数 > 対話入力
+    user_id = args.user_id or os.environ.get("RAKUTEN_USER_ID", "")
+    password = args.password or os.environ.get("RAKUTEN_PASSWORD", "")
+
+    if not user_id:
+        user_id = input("楽天会員ID: ").strip()
+    if not password:
+        password = getpass.getpass("パスワード: ")
 
     if not user_id or not password:
-        print("エラー: 環境変数 RAKUTEN_USER_ID と RAKUTEN_PASSWORD を設定してください")
-        print()
-        print("  export RAKUTEN_USER_ID='your_rakuten_id'")
-        print("  export RAKUTEN_PASSWORD='your_password'")
+        print("エラー: IDとパスワードが必要です")
         sys.exit(1)
 
-    headless = args.headless and not args.show_browser
+    headless = not args.show_browser
 
     print(f"楽天カード利用明細取得ツール")
     print(f"  取得月数: {args.months} ヶ月")
